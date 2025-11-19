@@ -1,8 +1,6 @@
-#include<stdio.h>
+/* project.c */
 #include "project.h"
 #include <ctype.h>
-#include<stdlib.h>
-#include<string.h>
 
 /* ---------- Globals ---------- */
 Branch *root = NULL;
@@ -11,12 +9,14 @@ int nextHelperID = 1;
 /* ---------- Queue Functions ---------- */
 Queue *createQueue() {
     Queue *q = malloc(sizeof(Queue));
+    if (!q) { perror("malloc"); exit(EXIT_FAILURE); }
     q->front = q->rear = NULL;
     return q;
 }
 
 void enqueueID(Queue *q, int id) {
     QNode *n = malloc(sizeof(QNode));
+    if (!n) { perror("malloc"); exit(EXIT_FAILURE); }
     n->helper_id = id;
     n->next = NULL;
     if (!q->rear)
@@ -46,15 +46,25 @@ void freeQueue(Queue *q) {
     free(q);
 }
 
-/* ---------- Input ---------- */
+/* ---------- Input Helpers ---------- */
 void read_line(char *buf, int size) {
-    fgets(buf, size, stdin);
+    if (!fgets(buf, size, stdin)) {
+        buf[0] = '\0';
+        return;
+    }
     buf[strcspn(buf, "\r\n")] = '\0';
+}
+
+/* clear leftover input until newline */
+void clearInputBuffer(void) {
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF);
 }
 
 /* ---------- Branch Functions ---------- */
 Branch *createBranchNode(const char *name) {
     Branch *b = malloc(sizeof(Branch));
+    if (!b) { perror("malloc"); exit(EXIT_FAILURE); }
     strncpy(b->name, name, NAME_LEN - 1);
     b->name[NAME_LEN - 1] = '\0';
     b->helpers_head = NULL;
@@ -94,46 +104,67 @@ Branch *minBranchNode(Branch *node) {
     return node;
 }
 
+/*
+ * removeBranchNode:
+ * - For nodes with 0 or 1 child: free helpers, adj and the node itself.
+ * - For nodes with 2 children: find inorder successor (min in right subtree),
+ *   copy successor's name into node, transfer successor's helper & adj lists to node,
+ *   clear successor's lists so recursive deletion doesn't free them again,
+ *   then remove successor from the right subtree.
+ */
 Branch *removeBranchNode(Branch *node, const char *name) {
     if (!node) return NULL;
 
     int cmp = strcmp(name, node->name);
 
-    if (cmp < 0)
+    if (cmp < 0) {
         node->left = removeBranchNode(node->left, name);
-    else if (cmp > 0)
+    }
+    else if (cmp > 0) {
         node->right = removeBranchNode(node->right, name);
+    }
     else {
-        Helper *h = node->helpers_head;
-        while (h) {
-            Helper *t = h->next;
-            free(h);
-            h = t;
-        }
+        /* Found the node to remove */
 
-        Neigh *n = node->adj;
-        while (n) {
-            Neigh *t = n->next;
-            free(n);
-            n = t;
-        }
+        /* CASE A: node has 0 or 1 child -> perform real deletion and free resources */
+        if (!node->left || !node->right) {
+            /* Free helpers list */
+            Helper *h = node->helpers_head;
+            while (h) {
+                Helper *t = h->next;
+                free(h);
+                h = t;
+            }
 
-        if (!node->left) {
-            Branch *r = node->right;
+            /* Free adjacency list */
+            Neigh *n = node->adj;
+            while (n) {
+                Neigh *t = n->next;
+                free(n);
+                n = t;
+            }
+
+            Branch *child = node->left ? node->left : node->right;
             free(node);
-            return r;
-        }
-        if (!node->right) {
-            Branch *l = node->left;
-            free(node);
-            return l;
+            return child;
         }
 
+        /* CASE B: node has 2 children -> use inorder successor */
         Branch *temp = minBranchNode(node->right);
-        strcpy(node->name, temp->name);
+
+        /* Copy successor's name to current node */
+        strncpy(node->name, temp->name, NAME_LEN - 1);
+        node->name[NAME_LEN - 1] = '\0';
+
+        /* Transfer ownership of successor's lists to current node */
         node->helpers_head = temp->helpers_head;
         node->adj = temp->adj;
 
+        /* Detach lists from successor so recursive delete doesn't free them */
+        temp->helpers_head = NULL;
+        temp->adj = NULL;
+
+        /* Remove successor node (successor will be in 0 or 1 child case) */
         node->right = removeBranchNode(node->right, temp->name);
     }
 
@@ -143,6 +174,7 @@ Branch *removeBranchNode(Branch *node, const char *name) {
 /* ---------- Helper Operations ---------- */
 void insertHelperToBranch(Branch *b, Helper *h) {
     Helper **pp = &b->helpers_head;
+    /* insert in ascending order of preference_num (smaller preference first) */
     while (*pp && (*pp)->preference_num <= h->preference_num)
         pp = &(*pp)->next;
 
@@ -190,16 +222,22 @@ int searchHelperByID(Branch *node, int id) {
 
 void addEdge(Branch *from, const char *to_name) {
     Neigh *n = malloc(sizeof(Neigh));
-    strcpy(n->branch_name, to_name);
+    if (!n) { perror("malloc"); exit(EXIT_FAILURE); }
+    strncpy(n->branch_name, to_name, NAME_LEN - 1);
+    n->branch_name[NAME_LEN - 1] = '\0';
     n->next = from->adj;
     from->adj = n;
 }
 
-/* ---------- Menu Option Functions ---------- */
+/* ---------- Menu Option Functions (scanf-only validation) ---------- */
 void optionAddBranch() {
     char name[NAME_LEN];
     printf("Enter branch name: ");
     read_line(name, NAME_LEN);
+    if (strlen(name) == 0) {
+        printf("Empty branch name. Aborted.\n");
+        return;
+    }
     root = insertBranch(root, name);
 }
 
@@ -217,7 +255,7 @@ void optionRemoveBranch() {
 
 void optionRegisterHelpers() {
     char branchName[NAME_LEN];
-    int count, pref_start, s, wages, t, extra_flag;
+    int count = 0, pref_start = 0, s = 0, wages = 0, t = 0, extra_flag = 0;
 
     printf("Enter branch: ");
     read_line(branchName, NAME_LEN);
@@ -228,22 +266,46 @@ void optionRegisterHelpers() {
     }
 
     printf("How many helpers? ");
-    scanf("%d", &count); getchar();
+    while (scanf("%d", &count) != 1 || count <= 0 || count > 1000) {
+        clearInputBuffer();
+        printf("Invalid input. Please enter a number between %d and %d: ", 1, 1000);
+    }
+    clearInputBuffer();
 
-    printf("Starting preference number: ");
-    scanf("%d", &pref_start); getchar();
+    printf("priority: ");
+    while (scanf("%d", &pref_start) != 1 || pref_start <= 0 || pref_start > 1000) {
+        clearInputBuffer();
+        printf("Invalid input. Please enter a positive number: ");
+    }
+    clearInputBuffer();
 
     printf("Sector (1-Pack, 2-Del, 3-Sort): ");
-    scanf("%d", &s); getchar();
+    while (scanf("%d", &s) != 1 || s < 1 || s > 3) {
+        clearInputBuffer();
+        printf("Invalid input. Please enter a number between %d and %d: ", 1, 3);
+    }
+    clearInputBuffer();
 
     printf("Wages: ");
-    scanf("%d", &wages); getchar();
+    while (scanf("%d", &wages) != 1 || wages < 0 || wages > 1000) {
+        clearInputBuffer();
+        printf("Invalid input. Please enter a number between %d and %d: ", 0, 1000);
+    }
+    clearInputBuffer();
 
     printf("Timing (1-Day, 2-Night): ");
-    scanf("%d", &t); getchar();
+    while (scanf("%d", &t) != 1 || t < 1 || t > 2) {
+        clearInputBuffer();
+        printf("Invalid input. Please enter a number between %d and %d: ", 1, 2);
+    }
+    clearInputBuffer();
 
-    printf("Extra flag (1/0): ");
-    scanf("%d", &extra_flag); getchar();
+    printf("Extra payment (1/0): ");
+    while (scanf("%d", &extra_flag) != 1 || (extra_flag != 0 && extra_flag != 1)) {
+        clearInputBuffer();
+        printf("Invalid input. Please enter a number between %d and %d: ", 0, 1);
+    }
+    clearInputBuffer();
 
     if (extra_flag) wages += 100;
 
@@ -255,6 +317,7 @@ void optionRegisterHelpers() {
 
     while (!queueEmpty(q)) {
         Helper *h = malloc(sizeof(Helper));
+        if (!h) { perror("malloc"); exit(EXIT_FAILURE); }
         h->id = dequeueID(q);
         h->preference_num = pref++;
         h->sector = (s == 2 ? DELIVERY : (s == 3 ? SORTING : PACKAGING));
@@ -272,9 +335,13 @@ void optionRegisterHelpers() {
 }
 
 void optionRemoveHelperByID() {
-    int id;
+    int id = 0;
     printf("Enter helper ID to remove: ");
-    scanf("%d", &id); getchar();
+    while (scanf("%d", &id) != 1 || id <= 0 || id > 1000) {
+        clearInputBuffer();
+        printf("Invalid input. Please enter a number between %d and %d: ", 1, 1000);
+    }
+    clearInputBuffer();
 
     if (removeHelperByID_traverse(root, id))
         printf("Helper removed.\n");
@@ -333,25 +400,29 @@ void optionTotalHelpersDetails() {
 }
 
 void optionSearchHelperByNumber() {
-    int id;
+    int id = 0;
     printf("Enter helper ID to search: ");
-    scanf("%d", &id); getchar();
+    while (scanf("%d", &id) != 1 || id <= 0 || id > 1000) {
+        clearInputBuffer();
+        printf("Invalid input. Please enter a number between %d and %d: ", 1, 1000);
+    }
+    clearInputBuffer();
 
     if (!searchHelperByID(root, id))
         printf("Not found.\n");
 }
 
 void optionConnectTwoBranches() {
-    char a[NAME_LEN], b[NAME_LEN];
+    char a[NAME_LEN], bname[NAME_LEN];
 
     printf("Enter source: ");
     read_line(a, NAME_LEN);
 
     printf("Enter destination: ");
-    read_line(b, NAME_LEN);
+    read_line(bname, NAME_LEN);
 
     Branch *ba = findBranch(root, a);
-    Branch *bb = findBranch(root, b);
+    Branch *bb = findBranch(root, bname);
 
     if (!ba || !bb) {
         printf("Branch not found.\n");
@@ -361,5 +432,5 @@ void optionConnectTwoBranches() {
     addEdge(ba, bb->name);
     addEdge(bb, ba->name);
 
-    printf("Connected %s <-> %s\n", a, b);
+    printf("Connected %s <-> %s\n", a, bname);
 }
