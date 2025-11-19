@@ -18,11 +18,18 @@ void printMenu() {
 }
 
 int main() {
-    int ch;
+    int ch = 0;
+
     while (1) {
         printMenu();
-        scanf("%d", &ch);
-        getchar();
+
+        /* validate menu choice using scanf-only approach */
+        while (scanf("%d", &ch) != 1 || ch < 1 || ch > 10) {
+            clearInputBuffer();
+            printf("Invalid input. Please enter a number between %d and %d: ", 1, 10);
+        }
+        clearInputBuffer();
+
         switch (ch) {
             case 1: optionAddBranch(); break;
             case 2: optionRemoveBranch(); break;
@@ -37,6 +44,7 @@ int main() {
                 printf("Thank you!\n");
                 return 0;
             default:
+                /* unreachable due to validation */
                 printf("Invalid option\n");
         }
     }
