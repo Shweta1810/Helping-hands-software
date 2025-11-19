@@ -1,3 +1,4 @@
+/* project.h */
 #ifndef PROJECT_H
 #define PROJECT_H
 
@@ -56,6 +57,7 @@ void freeQueue(Queue *);
 
 /* ---------- Input ---------- */
 void read_line(char *, int);
+void clearInputBuffer(void);
 
 /* ---------- Branch Operations ---------- */
 Branch *createBranchNode(const char *);
